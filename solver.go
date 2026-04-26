@@ -25,6 +25,8 @@ const (
 	geminiAPIURL = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
 )
 
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 type Config struct {
 	APIKey     string
 	APIKeys    []string
@@ -152,7 +154,7 @@ func (s *Solver) Solve(imageData []byte) (string, error) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-goog-api-key", key)
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("API request: %w", err)
 		}

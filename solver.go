@@ -235,7 +235,7 @@ func parseRetryAfter(header string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	if seconds, err := strconv.Atoi(header); err == nil {
-		if seconds > int(fallback.Seconds()) {
+		if seconds <= 0 || seconds > int(fallback.Seconds()) {
 			seconds = int(fallback.Seconds())
 		}
 		return time.Duration(seconds) * time.Second

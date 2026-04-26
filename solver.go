@@ -125,10 +125,11 @@ func (s *Solver) Solve(imageData []byte) (string, error) {
 
 	apiURL := fmt.Sprintf(geminiAPIURL, s.cfg.Model)
 	deadline := time.Now().Add(defaultDeadline)
+	rateLimitHits := 0
 
-	for attempt := 0; attempt < s.cfg.MaxRetries; attempt++ {
+	for attempt := 0; attempt < s.cfg.MaxRetries; {
 		if time.Now().After(deadline) {
-			return "", fmt.Errorf("deadline exceeded after %d attempts", attempt)
+			return "", fmt.Errorf("deadline exceeded after %d attempts (%d rate limits)", attempt, rateLimitHits)
 		}
 
 		key, wait := s.acquireKey()
@@ -163,12 +164,15 @@ func (s *Solver) Solve(imageData []byte) (string, error) {
 		resp.Body.Close()
 
 		if statusCode == 429 {
+			rateLimitHits++
 			retryWait := parseRetryAfter(resp.Header.Get("Retry-After"), s.cfg.Backoff)
 			maskedKey := key[:8] + "..." + key[len(key)-4:]
-			log.Printf("captcha solver: key %s rate limited, cooldown %v (attempt %d/%d)", maskedKey, retryWait, attempt+1, s.cfg.MaxRetries)
+			log.Printf("captcha solver: key %s rate limited, cooldown %v (rate limits: %d)", maskedKey, retryWait, rateLimitHits)
 			s.markRateLimited(key, retryWait)
 			continue
 		}
+
+		attempt++
 
 		if statusCode != 200 {
 			var ge geminiError

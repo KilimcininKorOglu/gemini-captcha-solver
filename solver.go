@@ -46,14 +46,14 @@ func New(cfg Config) *Solver {
 	if cfg.Model == "" {
 		cfg.Model = defaultModel
 	}
+	if info, ok := Models[cfg.Model]; ok && info.Deprecated {
+		log.Printf("captcha solver: WARNING: model %s is deprecated, consider switching to %s", cfg.Model, defaultModel)
+	}
 	if cfg.Prompt == "" {
 		cfg.Prompt = defaultPrompt
 	}
 	if cfg.MaxRetries <= 0 {
 		cfg.MaxRetries = defaultMaxRetries
-	}
-	if cfg.Backoff <= 0 {
-		cfg.Backoff = defaultBackoff
 	}
 
 	keys := cfg.APIKeys
@@ -165,7 +165,11 @@ func (s *Solver) Solve(imageData []byte) (string, error) {
 
 		if statusCode == 429 {
 			rateLimitHits++
-			retryWait := parseRetryAfter(resp.Header.Get("Retry-After"), s.cfg.Backoff)
+			fallback := modelCooldown(s.cfg.Model)
+			if s.cfg.Backoff > 0 {
+				fallback = s.cfg.Backoff
+			}
+			retryWait := parseRetryAfter(resp.Header.Get("Retry-After"), fallback)
 			maskedKey := key[:8] + "..." + key[len(key)-4:]
 			log.Printf("captcha solver: key %s rate limited, cooldown %v (rate limits: %d)", maskedKey, retryWait, rateLimitHits)
 			s.markRateLimited(key, retryWait)

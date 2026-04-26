@@ -179,9 +179,9 @@ func (s *Solver) Solve(imageData []byte) (string, error) {
 			json.Unmarshal(body, &ge)
 			switch statusCode {
 			case 401, 403:
-				return "", fmt.Errorf("auth error: %s", ge.Error.Message)
+				return "", fmt.Errorf("auth error: %s", truncate(ge.Error.Message, 100))
 			default:
-				return "", fmt.Errorf("API error: HTTP %d - %s", statusCode, ge.Error.Message)
+				return "", fmt.Errorf("API error: HTTP %d - %s", statusCode, truncate(ge.Error.Message, 100))
 			}
 		}
 
@@ -224,7 +224,7 @@ func extractText(body []byte) (string, error) {
 
 	code := cleaned.String()
 	if len(code) < 4 || len(code) > 8 {
-		return "", fmt.Errorf("invalid output: %q -> %q (%d chars)", text, code, len(code))
+		return "", fmt.Errorf("invalid output: %q -> %q (%d chars)", truncate(text, 50), code, len(code))
 	}
 
 	return code, nil
@@ -253,4 +253,11 @@ func maskKey(key string) string {
 		return "***"
 	}
 	return key[:8] + "..." + key[len(key)-4:]
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }

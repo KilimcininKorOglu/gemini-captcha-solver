@@ -1,7 +1,5 @@
 package captcha
 
-import "time"
-
 type ModelInfo struct {
 	ID         string
 	RPM        int
@@ -35,13 +33,6 @@ var Models = map[string]ModelInfo{
 	"gemini-2.0-flash-lite": {
 		ID: "gemini-2.0-flash-lite", RPM: 15, RPD: 1500, TPM: 250000, Deprecated: true,
 	},
-}
-
-func modelCooldown(model string) time.Duration {
-	if info, ok := Models[model]; ok && info.RPM > 0 {
-		return time.Duration(60/info.RPM) * time.Second
-	}
-	return defaultBackoff
 }
 
 func ActiveModels() []ModelInfo {

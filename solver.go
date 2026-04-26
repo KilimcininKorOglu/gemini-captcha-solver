@@ -18,9 +18,9 @@ const (
 	defaultModel      = "gemini-2.5-flash-lite"
 	defaultPrompt     = "Read the CAPTCHA text. Reply with ONLY the characters (letters and numbers), nothing else."
 	defaultMaxRetries = 5
-	defaultBackoff    = 6 * time.Second
 	defaultMaxTokens  = 256
 	defaultDeadline   = 5 * time.Minute
+	rpmWindow         = 60 * time.Second
 
 	geminiAPIURL = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
 )
@@ -31,7 +31,6 @@ type Config struct {
 	Model      string
 	Prompt     string
 	MaxRetries int
-	Backoff    time.Duration
 }
 
 type Solver struct {
@@ -77,14 +76,14 @@ func (s *Solver) acquireKey() (string, time.Duration) {
 	}
 
 	now := time.Now()
-	var earliestExpiry time.Time
+	var earliest time.Time
 
 	for i := 0; i < len(s.keys); i++ {
 		idx := (s.current + i) % len(s.keys)
 		key := s.keys[idx]
-		if expiry, limited := s.cooldown[key]; limited && now.Before(expiry) {
-			if earliestExpiry.IsZero() || expiry.Before(earliestExpiry) {
-				earliestExpiry = expiry
+		if exp, ok := s.cooldown[key]; ok && now.Before(exp) {
+			if earliest.IsZero() || exp.Before(earliest) {
+				earliest = exp
 			}
 			continue
 		}
@@ -93,13 +92,13 @@ func (s *Solver) acquireKey() (string, time.Duration) {
 		return key, 0
 	}
 
-	return "", time.Until(earliestExpiry)
+	return "", time.Until(earliest)
 }
 
-func (s *Solver) markRateLimited(key string, wait time.Duration) {
+func (s *Solver) markCooldown(key string, d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cooldown[key] = time.Now().Add(wait)
+	s.cooldown[key] = time.Now().Add(d)
 }
 
 func (s *Solver) Solve(imageData []byte) (string, error) {
@@ -125,25 +124,24 @@ func (s *Solver) Solve(imageData []byte) (string, error) {
 
 	apiURL := fmt.Sprintf(geminiAPIURL, s.cfg.Model)
 	deadline := time.Now().Add(defaultDeadline)
-	rateLimitHits := 0
 
 	for attempt := 0; attempt < s.cfg.MaxRetries; {
-		if time.Now().After(deadline) {
-			return "", fmt.Errorf("deadline exceeded after %d attempts (%d rate limits)", attempt, rateLimitHits)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return "", fmt.Errorf("deadline exceeded after %d attempts", attempt)
 		}
 
 		key, wait := s.acquireKey()
+
 		if key == "" && wait > 0 {
-			if wait > 2*time.Minute {
-				wait = 2 * time.Minute
+			if wait > remaining {
+				return "", fmt.Errorf("all keys cooling down for %v, only %v until deadline", wait, remaining)
 			}
-			log.Printf("captcha solver: all keys cooling down, waiting %v", wait)
+			log.Printf("captcha solver: all keys cooling down, waiting %v", wait.Round(time.Second))
 			time.Sleep(wait)
-			key, wait = s.acquireKey()
-			if key == "" {
-				return "", fmt.Errorf("no available keys after cooldown wait")
-			}
-		} else if key == "" {
+			continue
+		}
+		if key == "" {
 			return "", fmt.Errorf("no API keys configured")
 		}
 
@@ -161,18 +159,14 @@ func (s *Solver) Solve(imageData []byte) (string, error) {
 
 		body, _ := io.ReadAll(resp.Body)
 		statusCode := resp.StatusCode
+		retryAfter := resp.Header.Get("Retry-After")
 		resp.Body.Close()
 
 		if statusCode == 429 {
-			rateLimitHits++
-			fallback := modelCooldown(s.cfg.Model)
-			if s.cfg.Backoff > 0 {
-				fallback = s.cfg.Backoff
-			}
-			retryWait := parseRetryAfter(resp.Header.Get("Retry-After"), fallback)
-			maskedKey := key[:8] + "..." + key[len(key)-4:]
-			log.Printf("captcha solver: key %s rate limited, cooldown %v (rate limits: %d)", maskedKey, retryWait, rateLimitHits)
-			s.markRateLimited(key, retryWait)
+			cooldown := parseRetryAfter(retryAfter, rpmWindow)
+			masked := maskKey(key)
+			log.Printf("captcha solver: key %s rate limited, cooling down %v", masked, cooldown.Round(time.Second))
+			s.markCooldown(key, cooldown)
 			continue
 		}
 
@@ -189,45 +183,49 @@ func (s *Solver) Solve(imageData []byte) (string, error) {
 			}
 		}
 
-		var gr geminiResponse
-		if err := json.Unmarshal(body, &gr); err != nil {
-			return "", fmt.Errorf("parse response: %w", err)
-		}
-
-		if gr.PromptFeedback != nil && gr.PromptFeedback.BlockReason != "" {
-			return "", fmt.Errorf("safety filter: %s", gr.PromptFeedback.BlockReason)
-		}
-
-		if len(gr.Candidates) == 0 {
-			return "", fmt.Errorf("empty response")
-		}
-
-		candidate := gr.Candidates[0]
-		if candidate.FinishReason != "" && candidate.FinishReason != "STOP" {
-			return "", fmt.Errorf("incomplete response: %s", candidate.FinishReason)
-		}
-
-		if len(candidate.Content.Parts) == 0 || candidate.Content.Parts[0].Text == "" {
-			return "", fmt.Errorf("no text in response")
-		}
-
-		text := candidate.Content.Parts[0].Text
-		var cleaned strings.Builder
-		for _, r := range strings.ToLower(text) {
-			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-				cleaned.WriteRune(r)
-			}
-		}
-
-		code := cleaned.String()
-		if len(code) < 4 || len(code) > 8 {
-			return "", fmt.Errorf("invalid output: %q -> %q (%d chars)", text, code, len(code))
-		}
-
-		return code, nil
+		return extractText(body)
 	}
 
-	return "", fmt.Errorf("rate limit: all keys exhausted after %d retries", s.cfg.MaxRetries)
+	return "", fmt.Errorf("max retries (%d) exceeded", s.cfg.MaxRetries)
+}
+
+func extractText(body []byte) (string, error) {
+	var gr geminiResponse
+	if err := json.Unmarshal(body, &gr); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+
+	if gr.PromptFeedback != nil && gr.PromptFeedback.BlockReason != "" {
+		return "", fmt.Errorf("safety filter: %s", gr.PromptFeedback.BlockReason)
+	}
+
+	if len(gr.Candidates) == 0 {
+		return "", fmt.Errorf("empty response")
+	}
+
+	candidate := gr.Candidates[0]
+	if candidate.FinishReason != "" && candidate.FinishReason != "STOP" {
+		return "", fmt.Errorf("incomplete response: %s", candidate.FinishReason)
+	}
+
+	if len(candidate.Content.Parts) == 0 || candidate.Content.Parts[0].Text == "" {
+		return "", fmt.Errorf("no text in response")
+	}
+
+	text := candidate.Content.Parts[0].Text
+	var cleaned strings.Builder
+	for _, r := range strings.ToLower(text) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			cleaned.WriteRune(r)
+		}
+	}
+
+	code := cleaned.String()
+	if len(code) < 4 || len(code) > 8 {
+		return "", fmt.Errorf("invalid output: %q -> %q (%d chars)", text, code, len(code))
+	}
+
+	return code, nil
 }
 
 func parseRetryAfter(header string, fallback time.Duration) time.Duration {
@@ -238,10 +236,16 @@ func parseRetryAfter(header string, fallback time.Duration) time.Duration {
 		return time.Duration(seconds) * time.Second
 	}
 	if t, err := time.Parse(time.RFC1123, header); err == nil {
-		wait := time.Until(t)
-		if wait > 0 {
+		if wait := time.Until(t); wait > 0 {
 			return wait
 		}
 	}
 	return fallback
+}
+
+func maskKey(key string) string {
+	if len(key) < 12 {
+		return "***"
+	}
+	return key[:8] + "..." + key[len(key)-4:]
 }

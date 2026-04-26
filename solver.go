@@ -233,6 +233,9 @@ func parseRetryAfter(header string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	if seconds, err := strconv.Atoi(header); err == nil {
+		if seconds > int(fallback.Seconds()) {
+			seconds = int(fallback.Seconds())
+		}
 		return time.Duration(seconds) * time.Second
 	}
 	if t, err := time.Parse(time.RFC1123, header); err == nil {

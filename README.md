@@ -120,7 +120,7 @@ Free tier with rate limits. Get an API key at [Google AI Studio](https://aistudi
 
 ### NVIDIA NIM (HermesTech)
 
-Free access to multiple vision models via the Anthropic-compatible API at [HermesTech](https://hermestech.uk). No credit card required.
+Free access to multiple vision models via the Anthropic-compatible API at [HermesTech](https://nvidia.srv.hermestech.uk). No credit card required.
 
 ```go
 solver := captcha.New(captcha.Config{

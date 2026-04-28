@@ -10,7 +10,19 @@ import (
 
 const (
 	defaultModel      = "gemini-2.5-flash-lite"
-	defaultPrompt     = "This is a CAPTCHA image. What characters are shown? Output ONLY the exact letters and digits, nothing else. No description, no explanation, no quotes. Example output: ab3xk"
+	defaultPrompt     = `Read the CAPTCHA text in this image.
+
+RULES:
+1. Output ONLY the characters (letters and digits) you see.
+2. Do NOT describe the image.
+3. Do NOT explain what a CAPTCHA is.
+4. Do NOT add quotes, punctuation, or formatting.
+5. Do NOT write sentences or words other than the CAPTCHA code.
+6. The code is 4-8 characters long, mixed letters and digits.
+7. Your entire response must be exactly the CAPTCHA code and nothing else.
+
+GOOD examples: ab3xk, GPNTU, 7m2Kf
+BAD examples: "The text says ab3xk", "CAPTCHA: ab3xk", "I can see the characters..."`
 	defaultMaxRetries = 5
 	defaultMaxTokens  = 64
 	defaultDeadline   = 5 * time.Minute

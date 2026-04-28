@@ -1,5 +1,7 @@
 # ai-captcha-solver
 
+[Türkçe](README.tr.md)
+
 A Go library that solves image-based CAPTCHAs using AI vision APIs. Supports Gemini, OpenAI, and Anthropic providers with API key pooling for Gemini.
 
 ## Installation

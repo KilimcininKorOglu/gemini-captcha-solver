@@ -10,9 +10,9 @@ import (
 
 const (
 	defaultModel      = "gemini-2.5-flash-lite"
-	defaultPrompt     = "Read the CAPTCHA text. Reply with ONLY the characters (letters and numbers), nothing else."
+	defaultPrompt     = "This is a CAPTCHA image. What characters are shown? Output ONLY the exact letters and digits, nothing else. No description, no explanation, no quotes. Example output: ab3xk"
 	defaultMaxRetries = 5
-	defaultMaxTokens  = 256
+	defaultMaxTokens  = 32
 	defaultDeadline   = 5 * time.Minute
 )
 
